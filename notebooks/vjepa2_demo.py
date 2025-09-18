@@ -21,6 +21,10 @@ from src.models.vision_transformer import vit_giant_xformers_rope
 IMAGENET_DEFAULT_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_DEFAULT_STD = (0.229, 0.224, 0.225)
 
+#Rev variable de entorno para la GPUs
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+#Pull try
+
 
 def load_pretrained_vjepa_pt_weights(model, pretrained_weights):
     # Load weights of the VJEPA2 encoder
@@ -102,7 +106,7 @@ def run_sample_inference():
         "facebook/vjepa2-vitg-fpc64-384"  # Replace with your favored model, e.g. facebook/vjepa2-vitg-fpc64-384
     )
     # Path to local PyTorch weights
-    pt_model_path = "YOUR_MODEL_PATH"
+    pt_model_path = "models/vitg-384.pt"
 
     sample_video_path = "sample_video.mp4"
     # Download the video if not yet downloaded to local path
@@ -144,7 +148,7 @@ def run_sample_inference():
     )
 
     # Initialize the classifier
-    classifier_model_path = "YOUR_ATTENTIVE_PROBE_PATH"
+    classifier_model_path = "models/ssv2-vitg-384-64x2x3.pt"
     classifier = (
         AttentiveClassifier(embed_dim=model_pt.embed_dim, num_heads=16, depth=4, num_classes=174).cuda().eval()
     )
