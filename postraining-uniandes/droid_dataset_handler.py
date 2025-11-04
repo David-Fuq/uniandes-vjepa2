@@ -104,6 +104,7 @@ class DROIDVideoDataset(torch.utils.data.Dataset):
         fps=5,
         transform=None,
         camera_frame=False,
+        deterministic=True,
     ):
         self.data_path = data_path
         self.frames_per_clip = frames_per_clip
@@ -111,6 +112,7 @@ class DROIDVideoDataset(torch.utils.data.Dataset):
         self.fps = fps
         self.transform = transform
         self.camera_frame = camera_frame
+        self.deterministic = deterministic
 
         if VideoReader is None:
             raise ImportError('Unable to import "decord" which is required to read videos.')
@@ -225,9 +227,14 @@ class DROIDVideoDataset(torch.utils.data.Dataset):
         if vlen < nframes:
             raise Exception(f"Video is too short {vpath=}, {nframes=}, {vlen=}")
 
-        # sample a random window of nframes
-        ef = np.random.randint(nframes, vlen)
-        sf = ef - nframes
+        if self.deterministic:
+            # Always sample from the beginning for reproducibility
+            sf = 0
+            ef = nframes
+        else:
+            # Random sampling (original behavior)
+            ef = np.random.randint(nframes, vlen)
+            sf = ef - nframes
         indices = np.arange(sf, sf + nframes, fstp).astype(np.int64)
         # --
         states = states[indices, :][:: self.frameskip]
