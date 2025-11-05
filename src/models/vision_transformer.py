@@ -313,7 +313,9 @@ def vit_giant_xformers(patch_size=16, **kwargs):
     )
     return model
 
-
+'''
+From here on is legacy code.
+'''
 # We do not use any of the following ViT definitions in V-JEPA 2, but retain them for
 # compatibility reasons.
 def vit_synthetic(patch_size=16, **kwargs):

@@ -14,6 +14,7 @@ import numpy as np
 from postraining_uniandes.logger_helper import get_logger
 from postraining_uniandes.droid_dataset_handler import init_data
 from postraining_uniandes.transforms import make_transforms
+from postraining_uniandes.encoder_decoder_init import init_video_model
 
 logger = get_logger(__name__, force=True)
 def train(args):
@@ -109,6 +110,35 @@ def train(args):
     eps = cfgs_opt.get("eps", 1.0e-8)
 
     print("Training configuration loaded successfully.")
+
+    if not torch.cuda.is_available():
+        device = torch.device("cpu")
+    else:
+        device = torch.device("cuda:0")
+        torch.cuda.set_device(device)
+
+
+    initial_encoder, initial_predictor = init_video_model(
+        uniform_power=uniform_power,
+        device=device,
+        patch_size=patch_size,
+        max_num_frames=512,
+        tubelet_size=tubelet_size,
+        model_name=model_name,
+        crop_size=crop_size,
+        pred_depth=pred_depth,
+        pred_num_heads=pred_num_heads,
+        pred_embed_dim=pred_embed_dim,
+        action_embed_dim=7,
+        pred_is_frame_causal=pred_is_frame_causal,
+        use_extrinsics=use_extrinsics,
+        use_sdpa=use_sdpa,
+        use_silu=use_silu,
+        use_pred_silu=use_pred_silu,
+        wide_silu=wide_silu,
+        use_rope=use_rope,
+        use_activation_checkpointing=use_activation_checkpointing,
+    )
 
     transform = make_transforms(
         random_horizontal_flip=False,
