@@ -11,10 +11,12 @@ Pipeline:
 import sys
 import torch
 import numpy as np
+import copy
 from postraining_uniandes.logger_helper import get_logger
 from postraining_uniandes.droid_dataset_handler import init_data
 from postraining_uniandes.transforms import make_transforms
 from postraining_uniandes.encoder_decoder_init import init_video_model
+from postraining_uniandes.load_pretrained_encoder import load_pretrained_weights
 
 logger = get_logger(__name__, force=True)
 def train(args):
@@ -118,7 +120,7 @@ def train(args):
         torch.cuda.set_device(device)
 
 
-    initial_encoder, initial_predictor = init_video_model(
+    initial_encoder, predictor = init_video_model(
         uniform_power=uniform_power,
         device=device,
         patch_size=patch_size,
@@ -140,6 +142,8 @@ def train(args):
         use_activation_checkpointing=use_activation_checkpointing,
     )
 
+    target_encoder = copy.deepcopy(encoder)
+
     transform = make_transforms(
         random_horizontal_flip=False,
         random_resize_aspect_ratio=[0.75, 1.35],
@@ -149,7 +153,17 @@ def train(args):
         motion_shift=False,
         crop_size=crop_size,
     )
+
+    encoder, target_encoder = load_pretrained_weights(
+        r_path=p_file,
+        encoder=initial_encoder,
+        target_encoder=target_encoder,
+        context_encoder_key=context_encoder_key,
+        target_encoder_key=target_encoder_key,
+    )
+
     logger.info("Initializing data loader...")
+    
     data_loader, sampler = init_data(
         data_path=dataset_path,
         batch_size=batch_size,
