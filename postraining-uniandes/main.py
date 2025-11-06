@@ -11,9 +11,9 @@ from pathlib import Path
 import logging
 import os
 import multiprocessing as mp
-from logger import get_logger
+from postraining_uniandes.logger_helper import get_logger
 import pprint
-from train import train
+from postraining_uniandes.train import train
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--fname", type=str, help="name of config file to load", default="configs.yaml")
