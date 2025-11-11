@@ -54,7 +54,7 @@ class VisionTransformerPredictorAC(nn.Module):
         self.action_encoder = nn.Linear(action_embed_dim, predictor_embed_dim, bias=True)
         self.state_encoder = nn.Linear(action_embed_dim, predictor_embed_dim, bias=True)
         self.extrinsics_encoder = nn.Linear(action_embed_dim - 1, predictor_embed_dim, bias=True)
-
+        
         # Determine positional embedding
         if type(img_size) is int:
             img_size = (img_size, img_size)

@@ -9,16 +9,31 @@ Pipeline:
 6. Repeat!
 '''
 import sys
+import os
 import torch
 import numpy as np
 import copy
+import time
+import random   
+import torch.nn.functional as F
 from postraining_uniandes.logger_helper import get_logger
 from postraining_uniandes.droid_dataset_handler import init_data
 from postraining_uniandes.transforms import make_transforms
 from postraining_uniandes.encoder_decoder_init import init_video_model
 from postraining_uniandes.load_pretrained_encoder import load_pretrained_weights
+from utils.logging import AverageMeter, CSVLogger, gpu_timer
+
+
+
+_GLOBAL_SEED = 0
+random.seed(_GLOBAL_SEED)
+np.random.seed(_GLOBAL_SEED)
+torch.manual_seed(_GLOBAL_SEED)
+torch.backends.cudnn.benchmark = True
 
 logger = get_logger(__name__, force=True)
+log_freq = 10
+
 def train(args):
     folder = args.get("folder")
     cfgs_meta = args.get("meta")
@@ -119,6 +134,21 @@ def train(args):
         device = torch.device("cuda:0")
         torch.cuda.set_device(device)
 
+    #Checkpioint paths and log
+    log_file = os.path.join(folder, f"log_r.csv")
+    latest_path = os.path.join(folder, "latest.pt")
+
+    csv_logger = CSVLogger(
+        log_file,
+        ("%d", "epoch"),
+        ("%d", "itr"),
+        ("%.5f", "loss"),
+        ("%d", "iter-time(ms)"),
+        ("%d", "gpu-time(ms)"),
+        ("%d", "dataload-time(ms)"),
+        mode="+a",
+    )
+
 
     initial_encoder, predictor = init_video_model(
         uniform_power=uniform_power,
@@ -182,106 +212,197 @@ def train(args):
     )
     logger.info(f"Data loader initialized. Dataset length: {len(data_loader)}")
 
+    def save_checkpoint(epoch, path):
+        save_dict = {
+            "encoder": encoder.state_dict(),
+            "predictor": predictor.state_dict(),
+            #"opt": optimizer.state_dict(),
+            #"scaler": None if scaler is None else scaler.state_dict(),
+            "target_encoder": target_encoder.state_dict(),
+            "epoch": epoch,
+            #"loss": loss_meter.avg,
+            "batch_size": batch_size,
+            #"world_size": world_size,
+            "lr": lr,
+        }
+        try:
+            torch.save(save_dict, path)
+        except Exception as e:
+            logger.info(f"Encountered exception when saving checkpoint: {e}")
+
     NUM_BATCHES = 3
     loader_iter = iter(data_loader)
-    for batch_idx in range(NUM_BATCHES):
-        logger.info(f"\n{'='*80}")
-        logger.info(f"Testing batch {batch_idx + 1}/{NUM_BATCHES}")
-        logger.info('='*80)
-        
-        try:
-            sample = next(loader_iter)
-            
-            # Unpack sample (no extrinsics!)
-            buffer = sample[0]   # [B, C, T, H, W]
-            actions = sample[1]  # [B, T-1, 7]
-            states = sample[2]   # [B, T, 7]
-            indices = sample[3]  # [B, T]
-            
-            logger.info(f"\n[SHAPES]")
-            logger.info(f"  buffer.shape:  {buffer.shape}")
-            logger.info(f"  actions.shape: {actions.shape}")
-            logger.info(f"  states.shape:  {states.shape}")
-            logger.info(f"  indices.shape: {indices.shape}")
-            
-            logger.info(f"\n[DATA TYPES]")
-            logger.info(f"  buffer.dtype:  {buffer.dtype}")
-            logger.info(f"  actions.dtype: {actions.dtype}")
-            logger.info(f"  states.dtype:  {states.dtype}")
-            logger.info(f"  indices.dtype: {indices.dtype}")
-            
-            logger.info(f"\n[VALUE RANGES]")
-            logger.info(f"  buffer:  min={buffer.min():.4f}, max={buffer.max():.4f}, mean={buffer.mean():.4f}")
-            logger.info(f"  actions: min={actions.min():.4f}, max={actions.max():.4f}, mean={actions.mean():.4f}")
-            logger.info(f"  states:  min={states.min():.4f}, max={states.max():.4f}, mean={states.mean():.4f}")
-            
-            logger.info(f"\n[FIRST SAMPLE IN BATCH]")
-            logger.info(f"  First 3 pixels of first frame (RGB):")
-            logger.info(f"    {buffer[0, :, 0, 0, :3]}")
-            logger.info(f"  First action vector (xyz, rotation, gripper):")
-            logger.info(f"    {actions[0, 0]}")
-            logger.info(f"  First state vector:")
-            logger.info(f"    {states[0, 0]}")
-            logger.info(f"  Frame indices:")
-            logger.info(f"    {indices[0]}")
-            
-            logger.info(f"\n[VALIDATION CHECKS]")
-            # Check for NaN/Inf
-            has_nan_buffer = torch.isnan(buffer).any().item()
-            has_nan_actions = torch.isnan(actions).any().item()
-            has_nan_states = torch.isnan(states).any().item()
-            
-            logger.info(f"  buffer has NaN:  {has_nan_buffer}")
-            logger.info(f"  actions has NaN: {has_nan_actions}")
-            logger.info(f"  states has NaN:  {has_nan_states}")
-            
-            # Check expected dimensions
-            expected_buffer_shape = (batch_size, 3, max_num_frames, crop_size, crop_size)
-            expected_actions_shape = (batch_size, max_num_frames - 1, 7)
-            expected_states_shape = (batch_size, max_num_frames, 7)
 
-            assert buffer.shape == expected_buffer_shape, f"Buffer shape mismatch! Expected {expected_buffer_shape}, got {buffer.shape}"
-            assert actions.shape == expected_actions_shape, f"Actions shape mismatch! Expected {expected_actions_shape}, got {actions.shape}"
-            assert states.shape == expected_states_shape, f"States shape mismatch! Expected {expected_states_shape}, got {states.shape}"
-            
-            logger.info(f"All shapes correct!")
-            
-            # Verify action computation (actions should be state differences)
-            # For first sample, check if action[0] ≈ state[1] - state[0]
-            computed_xyz_diff = states[0, 1, :3] - states[0, 0, :3]
-            actual_xyz_diff = actions[0, 0, :3]
-            xyz_match = torch.allclose(computed_xyz_diff, actual_xyz_diff, atol=1e-5)
-            logger.info(f"  Action XYZ matches state difference: {xyz_match}")
-            if not xyz_match:
-                logger.warning(f"    Expected: {computed_xyz_diff}")
-                logger.warning(f"    Got:      {actual_xyz_diff}")
-            
-            logger.info("=" * 80)
-            logger.info("DEBUG: First batch data shapes and samples")
-            logger.info(f"clips.shape: {buffer.shape}")
-            logger.info(f"actions.shape: {actions.shape}")
-            logger.info(f"states.shape: {states.shape}")
-            
-            # Log first sample in batch
-            logger.info("\nFirst sample in batch:")
-            logger.info(f"clips[0, :, 0, 0, :5]: {buffer[0, :, 0, 0, :5]}")  # First 5 pixels of first frame
-            logger.info(f"actions[0, :3]: \n{actions[0, :3]}")  # First 3 action vectors
-            logger.info(f"states[0, :3]: \n{states[0, :3]}")  # First 3 state vectors
-            
-            # Check for NaN or Inf
-            logger.info(f"\nData validation:")
-            logger.info(f"clips has NaN: {torch.isnan(buffer).any().item()}")
-            logger.info(f"actions has NaN: {torch.isnan(actions).any().item()}")
-            logger.info(f"states has NaN: {torch.isnan(states).any().item()}")
-            logger.info("=" * 80)
-            
-        except Exception as e:
-            logger.error(f"Error loading batch {batch_idx}: {e}")
-            import traceback
-            traceback.print_exc()
-            break
+    # Training loop
+
+    for epoch in range(NUM_BATCHES):
+        logger.info("Epoch %d" % (epoch + 1))
+
+        loss_meter = AverageMeter()
+        jloss_meter = AverageMeter()
+        sloss_meter = AverageMeter()
+        iter_time_meter = AverageMeter()
+        gpu_time_meter = AverageMeter()
+        data_elapsed_time_meter = AverageMeter()
+
+        for itr in range(ipe): #Iterations per epoch
+            itr_start_time = time.time()
+
+            iter_retries = 0
+            iter_successful = False
+            while not iter_successful:
+                try:
+                    sample = next(loader_iter)
+                    iter_successful = True
+                except StopIteration:
+                    logger.info("Exhausted data loaders. Refreshing...")
+                    #unsupervised_sampler.set_epoch(epoch)
+                    loader_iter  = iter(data_loader)
+                except Exception as e:
+                    NUM_RETRIES = 5
+                    if iter_retries < NUM_RETRIES:
+                        logger.warning(f"Encountered exception when loading data (num retries {iter_retries}):\n{e}")
+                        iter_retries += 1
+                        time.sleep(5)
+                    else:
+                        logger.warning(f"Exceeded max retries ({NUM_RETRIES}) when loading data. Skipping batch.")
+                        raise e
+
+            def load_clips():
+                clips = sample[0].to(device, non_blocking=True)  # [B C T H W]
+                actions = sample[1].to(device, dtype=torch.float, non_blocking=True)  # [B T-1 7]
+                states = sample[2].to(device, dtype=torch.float, non_blocking=True)  # [B T 7]
+                extrinsics = sample[3].to(device, dtype=torch.float, non_blocking=True)  # [B T 7]
+                return (clips, actions, states, extrinsics)
+
+            clips, actions, states, extrinsics = load_clips()
+            data_elapsed_time_ms = (time.time() - itr_start_time) * 1000.0
+
+            '''if sync_gc and (itr + 1) % GARBAGE_COLLECT_ITR_FREQ == 0:
+                logger.info("Running garbage collection...")
+                gc.collect()'''
+
+            def train_step():
+                #_new_lr = scheduler.step()
+                #_new_wd = wd_scheduler.step()
+                # --
+
+                def forward_target(c):
+                    with torch.no_grad():
+                        c = c.permute(0, 2, 1, 3, 4).flatten(0, 1).unsqueeze(2).repeat(1, 1, 2, 1, 1)
+                        h = target_encoder(c)
+                        h = h.view(batch_size, max_num_frames, -1, h.size(-1)).flatten(1, 2)
+                        if normalize_reps:
+                            h = F.layer_norm(h, (h.size(-1),))
+                        return h
+
+                def forward_predictions(z):
+
+                    def _step_predictor(_z, _a, _s, _e):
+                        _z = predictor(_z, _a, _s, _e)
+                        if normalize_reps:
+                            _z = F.layer_norm(_z, (_z.size(-1),))
+                        return _z
+
+                    # -- one step of predictor with teacher forcing
+                    _z, _a, _s, _e = z[:, :-tokens_per_frame], actions, states[:, :-1], extrinsics[:, :-1]
+                    z_tf = _step_predictor(_z, _a, _s, _e)
+
+                    # -- full auto-regressive rollouts of predictor
+                    _z = torch.cat([z[:, : tokens_per_frame], z_tf[:, : tokens_per_frame]], dim=1)
+                    for n in range(1, auto_steps):
+                        _a, _s, _e = actions[:, : n + 1], states[:, : n + 1], extrinsics[:, : n + 1]
+                        _z_nxt = _step_predictor(_z, _a, _s, _e)[:, -tokens_per_frame:]
+                        _z = torch.cat([_z, _z_nxt], dim=1)
+                    z_ar = _z[:, tokens_per_frame:]
+
+                    return z_tf, z_ar
+
+                def loss_fn(z, h):
+                    _h = h[:, tokens_per_frame : z.size(1) + tokens_per_frame]
+                    return torch.mean(torch.abs(z - _h) ** loss_exp) / loss_exp
+
+                # Step 1. Forward
+                with torch.cuda.amp.autocast(dtype=dtype, enabled=mixed_precision):
+                    h = forward_target(clips)
+                    z_tf, z_ar = forward_predictions(h)
+                    jloss = loss_fn(z_tf, h)
+                    sloss = loss_fn(z_ar, h)
+                    loss = jloss + sloss
+
+                # Step 2. Backward & step
+                '''if mixed_precision:
+                    scaler.scale(loss).backward()
+                    scaler.unscale_(optimizer)
+                else:
+                    loss.backward()
+                if mixed_precision:
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    optimizer.step()
+                optimizer.zero_grad()'''
+
+                return (
+                    float(loss),
+                    float(jloss),
+                    float(sloss),
+                    _new_lr,
+                    _new_wd,
+                )
+
+            (
+                loss,
+                jloss,
+                sloss,
+                _new_lr,
+                _new_wd,
+            ), gpu_etime_ms = gpu_timer(train_step)
+            iter_elapsed_time_ms = (time.time() - itr_start_time) * 1000.0
+            loss_meter.update(loss)
+            jloss_meter.update(jloss)
+            sloss_meter.update(sloss)
+            iter_time_meter.update(iter_elapsed_time_ms)
+            gpu_time_meter.update(gpu_etime_ms)
+            data_elapsed_time_meter.update(data_elapsed_time_ms)
+
+            # -- Logging
+            def log_stats():
+                csv_logger.log(epoch + 1, itr, loss, iter_elapsed_time_ms, gpu_etime_ms, data_elapsed_time_ms)
+                if (itr % log_freq == 0) or (itr == ipe - 1) or np.isnan(loss) or np.isinf(loss):
+                    logger.info(
+                        "[%d, %5d] loss: %.3f [%.2f, %.2f] "
+                        "[wd: %.2e] [lr: %.2e] "
+                        "[mem: %.2e] "
+                        "[iter: %.1f ms] "
+                        "[gpu: %.1f ms] "
+                        "[data: %.1f ms]"
+                        % (
+                            epoch + 1,
+                            itr,
+                            loss_meter.avg,
+                            jloss_meter.avg,
+                            sloss_meter.avg,
+                            _new_wd,
+                            _new_lr,
+                            torch.cuda.max_memory_allocated() / 1024.0**2,
+                            iter_time_meter.avg,
+                            gpu_time_meter.avg,
+                            data_elapsed_time_meter.avg,
+                        )
+                    )
+
+            log_stats()
+            assert not np.isnan(loss), "loss is nan"
+
+        # -- Save Checkpoint
+        logger.info("avg. loss %.3f" % loss_meter.avg)
+        # -- Save Last
+        if epoch % CHECKPOINT_FREQ == 0 or epoch == (num_epochs - 1):
+            save_checkpoint(epoch + 1, latest_path)
+            if save_every_freq > 0 and epoch % save_every_freq == 0:
+                save_every_file = f"e{epoch}.pt"
+                save_every_path = os.path.join(folder, save_every_file)
+                save_checkpoint(epoch + 1, save_every_path)
+
     
-    logger.info(f"\n{'='*80}")
-    logger.info("Data loading test completed!")
-    logger.info('='*80)
-

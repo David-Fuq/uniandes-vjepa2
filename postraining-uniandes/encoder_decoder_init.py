@@ -1,5 +1,6 @@
 import postraining_uniandes.vision_transformer as video_vit
 from postraining_uniandes.logger_helper import get_logger
+from postraining_uniandes.predictor import my_predictor
 
 logger = get_logger()
 
@@ -60,19 +61,12 @@ def init_video_model(
     )
 
     encoder.to(device)
-    #predictor.to(device)
+    predictor.to(device)
     logger.info(encoder)
-    #logger.info(predictor)
+    logger.info(predictor)
 
     def count_parameters(model):
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
-    
-    def my_predictor(*args, **kwargs):
-        logger.info("Using a dummy predictor.")
-        class DummyPredictor:
-            def parameters(self):
-                return []
-        return DummyPredictor()
 
     logger.info(f"Encoder number of parameters: {count_parameters(encoder)}")
     logger.info(f"Predictor number of parameters: {count_parameters(predictor)}")
