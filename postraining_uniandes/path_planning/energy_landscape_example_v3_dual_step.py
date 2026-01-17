@@ -19,7 +19,7 @@ from notebooks.utils.world_model_wrapper import WorldModel
 from app.vjepa_droid.utils import init_video_model
 
 
-device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(f"\nUsing device: {device}")
 if torch.cuda.is_available():
     print(f"GPU: {torch.cuda.get_device_name(device)}")
@@ -68,7 +68,7 @@ transform = make_transforms(
 
 play_in_reverse = False  # Use this FLAG to try loading the trajectory backwards, and see how the energy landscape changes
 
-trajectory = np.load(os.path.join(script_dir,"test_trajectory_4.npz"))
+trajectory = np.load(os.path.join(script_dir,"test_trajectory_5_known.npz"))
 np_clips_full = trajectory["observations"][:, :7]
 np_states_full = trajectory["states"][:, :7]
 if play_in_reverse:
@@ -125,8 +125,8 @@ strip = clips_vis.transpose(1, 0, 2, 3).reshape(H, W * T, 3)
 plt.figure(figsize=(20, 3))
 plt.imshow(strip)
 plt.title(f"Full Trajectory Visualization ({T} frames)")
-plt.savefig(os.path.join(script_dir, "trajectory_frames_original_v4_lemon.png"), bbox_inches='tight', dpi=100)
-print(f"\nSaved visualization to {os.path.join(script_dir, 'trajectory_frames_original_v4_lemon.png')}")
+plt.savefig(os.path.join(script_dir, "trajectory_frames_original_trajectory_5_known.png"), bbox_inches='tight', dpi=100)
+print(f"\nSaved visualization to {os.path.join(script_dir, 'trajectory_frames_original_trajectory_5_known.png')}")
 plt.close()
 
 def forward_target(c, normalize_reps=True):
@@ -298,52 +298,40 @@ with torch.no_grad():
     planned_actions = world_model.infer_next_action(z_start, s_start, z_goal).cpu().numpy()
 
 print(f"\n{'='*80}")
-print(f"RESULTS (Aggregated to match Tubelet=2)")
+print(f"RESULTS (Meta Original Model)")
 print(f"{'='*80}")
-print(f"Raw planned action shape: {planned_actions.shape} (Should be [6, 7])")
+print(f"Inference mode: Frame-by-frame (Δt = 1)")
+print(f"Planned action sequence shape: {planned_actions.shape}")
 
-print(f"\nAction sequence comparison (2-frame steps):")
-print(f"{'Big Step':<10} {'Planned (Aggregated)':<30} {'Ground Truth (2-frame)':<30} {'Error':<10}")
+print(f"\nAction sequence comparison (frame-by-frame):")
+print(f"{'Step':<6} {'Planned (x,y,z)':<30} {'Ground Truth (x,y,z)':<30} {'Error':<10}")
 print(f"{'-'*80}")
 
 total_error = 0.0
-num_big_steps = rollout_steps // 2  # 6 // 2 = 3
 
-for i in range(num_big_steps):
-    # Index for the raw actions
-    idx_1 = i * 2       # 0, 2, 4
-    idx_2 = i * 2 + 1   # 1, 3, 5
+for i in range(rollout_steps):
+    pred = planned_actions[i]
     
-    # 1. Aggregate Planned Actions
-    # We sum Action(t->t+1) + Action(t+1->t+2) to get Action(t->t+2)
-    # Note: For XYZ translations, simple summation is geometrically valid.
-    action_step_1 = planned_actions[idx_1]
-    action_step_2 = planned_actions[idx_2]
+    # Frame-by-frame: action i moves from frame i to frame i+1
+    t_start = i
+    t_end = i + 1
     
-    combined_action = action_step_1 + action_step_2
-    
-    # 2. Compute Ground Truth for the 2-frame gap
-    # From State[0] to State[2], State[2] to State[4], etc.
-    state_start_idx = i * 2
-    state_end_idx = (i + 1) * 2
-    
+    # Compute Ground Truth (frame-to-frame difference)
     gt_action = poses_to_diff(
-        np_states_full[0, state_start_idx],
-        np_states_full[0, state_end_idx]
+        np_states_full[0, t_start],
+        np_states_full[0, t_end]
     ).numpy()
     
-    # 3. Compute Error
-    error = np.linalg.norm(combined_action[:3] - gt_action[:3])
+    error = np.linalg.norm(pred[:3] - gt_action[:3])
     total_error += error
     
-    print(f"{i+1:<10} "
-          f"({combined_action[0]:6.4f},{combined_action[1]:6.4f},{combined_action[2]:6.4f})      "
+    print(f"{i+1:<6} ({pred[0]:6.4f},{pred[1]:6.4f},{pred[2]:6.4f})      "
           f"({gt_action[0]:6.4f},{gt_action[1]:6.4f},{gt_action[2]:6.4f})      "
           f"{error:6.4f}")
 
-avg_error = total_error / num_big_steps
+avg_error = total_error / rollout_steps
 print(f"{'-'*80}")
-print(f"Average xyz error (per 2-frame step): {avg_error:.4f}")
+print(f"Average xyz error (per frame): {avg_error:.4f}")
 
 print(f"\n{'='*80}")
 print(f"DONE")

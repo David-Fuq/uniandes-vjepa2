@@ -518,7 +518,7 @@ class VisionTransformerPredictorAC(nn.Module):
         B, seq_len, D_enc = z.shape
         T = states.shape[1]
 
-        self.verbose = True  # Enable verbose logging for this forward pass
+        self.verbose = False  # Enable verbose logging for this forward pass
         
         if self.verbose:
             logger.info("="*80)
