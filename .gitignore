@@ -36,3 +36,7 @@ data_curation/droid_raw_data_mug/
 data_curation/Thu_Jul_20_10:54:28_2023/
 final_dataset_*/
 models/
+
+*.pyc
+*.pt
+.vscode/
