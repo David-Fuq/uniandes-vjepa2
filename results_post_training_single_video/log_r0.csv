@@ -1,0 +1,2 @@
+epoch,itr,loss,iter-time(ms),gpu-time(ms),dataload-time(ms)
+epoch,itr,loss,iter-time(ms),gpu-time(ms),dataload-time(ms)
