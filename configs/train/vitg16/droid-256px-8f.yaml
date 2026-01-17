@@ -1,53 +1,59 @@
 app: vjepa_droid
+
+# === Hardware configuration ===
 cpus_per_task: 12
-folder: /your_folder/droid/4.8.vitg16-256px-8f
-mem_per_gpu: 220G
-nodes: 4
-tasks_per_node: 8
+mem_per_gpu: 48G          # adjusted for your single A40 (46 GB)
+nodes: 1                  # only one machine
+tasks_per_node: 1         # one training process
+folder: ./B_results_post_training # relative path inside your repo
+
+# === Data settings ===
 data:
-  batch_size: 8
+  batch_size: 1
   camera_views:
-  - left_mp4_path
+    - left_mp4_path
   crop_size: 256
   datasets:
-    # CSV file, each line is a trajectory dir path
-    # See https://github.com/facebookresearch/vjepa2/issues/65
-    - /your_file_path/droid_train_paths.csv
+    - ./droid_index_10_pcs.csv       # path to your CSV in the repo root
   dataset_fpcs:
-  - 8
+    - 8
   fps: 4
-  num_workers: 12
+  num_workers: 8              # fewer workers for local single-GPU
   patch_size: 16
   pin_mem: true
   stereo_view: false
   tubelet_size: 2
+
+# === Data augmentation (disabled for post-training) ===
 data_aug:
   auto_augment: false
   horizontal_flip: false
   motion_shift: false
-  random_resize_aspect_ratio:
-  - 0.75
-  - 1.35
-  random_resize_scale:
-  - 1.777
-  - 1.777
+  random_resize_aspect_ratio: [0.75, 1.35]
+  random_resize_scale: [1.777, 1.777]
   reprob: 0.0
+
+# === Loss settings ===
 loss:
   auto_steps: 2
   loss_exp: 1.0
   normalize_reps: true
   reg_coeff: 0.0
+
+# === Meta configuration ===
 meta:
   dtype: bfloat16
   eval_freq: 100
   resume_checkpoint: null
   load_predictor: false
-  pretrain_checkpoint: /your_vjepa2_checkpoints/vitg.pt
-  context_encoder_key: target_encoder
-  target_encoder_key: target_encoder
+  pretrain_checkpoint: ./vjepa2_checkpoints/vitg.pt  # relative path to your checkpoint
+  context_encoder_key: model
+  target_encoder_key: model
   save_every_freq: 25
   seed: 239
   use_sdpa: true
+
+# === Model configuration ===
 model:
   model_name: vit_giant_xformers
   pred_depth: 24
@@ -56,11 +62,13 @@ model:
   pred_num_heads: 16
   uniform_power: true
   use_activation_checkpointing: true
-  use_extrinsics: false
+  use_extrinsics: false #We can directly eliminate the extrinsics part!
   use_rope: true
+
+# === Optimization schedule ===
 optimization:
   anneal: 15
-  epochs: 315
+  epochs: 1
   final_lr: 0.0
   final_weight_decay: 0.04
   ipe: 300
