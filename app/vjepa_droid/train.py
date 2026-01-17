@@ -108,6 +108,7 @@ def main(args, resume_preempt=False):
     camera_views = cfgs_data.get("camera_views", ["left_mp4_path"])
     stereo_view = cfgs_data.get("stereo_view", False)
     batch_size = cfgs_data.get("batch_size")
+    accumulation_steps = cfgs_data.get("accumulation_steps", 1)  
     tubelet_size = cfgs_data.get("tubelet_size")
     fps = cfgs_data.get("fps")
     crop_size = cfgs_data.get("crop_size", 256)
@@ -271,11 +272,6 @@ def main(args, resume_preempt=False):
         betas=betas,
         eps=eps,
     )
-    encoder = DistributedDataParallel(encoder, static_graph=True)
-    predictor = DistributedDataParallel(predictor, static_graph=False, find_unused_parameters=True)
-    target_encoder = DistributedDataParallel(target_encoder)
-    for p in target_encoder.parameters():
-        p.requires_grad = False
 
     # -- looad pretrained weights
     encoder, predictor, target_encoder = load_pretrained(
@@ -289,9 +285,16 @@ def main(args, resume_preempt=False):
         load_encoder=load_encoder,
     )
 
+    encoder = DistributedDataParallel(encoder, static_graph=True)
+    predictor = DistributedDataParallel(predictor, static_graph=False, find_unused_parameters=True)
+    target_encoder = DistributedDataParallel(target_encoder)
+    for p in target_encoder.parameters():
+        p.requires_grad = False
+
     start_epoch = 0
     # -- load training checkpoint
     if os.path.exists(latest_path):
+        logger.info("Inside of exists latest_path aka load checkpoint")
         (
             encoder,
             predictor,
@@ -391,6 +394,24 @@ def main(args, resume_preempt=False):
                 actions = sample[1].to(device, dtype=torch.float, non_blocking=True)  # [B T-1 7]
                 states = sample[2].to(device, dtype=torch.float, non_blocking=True)  # [B T 7]
                 extrinsics = sample[3].to(device, dtype=torch.float, non_blocking=True)  # [B T 7]
+                '''logger.info("=" * 80)
+                logger.info("DEBUG: First batch data shapes and samples")
+                logger.info(f"clips.shape: {clips.shape}")
+                logger.info(f"actions.shape: {actions.shape}")
+                logger.info(f"states.shape: {states.shape}")
+                
+                # Log first sample in batch
+                logger.info("\nFirst sample in batch:")
+                logger.info(f"clips[0, :, 0, 0, :5]: {clips[0, :, 0, 0, :5]}")  # First 5 pixels of first frame
+                logger.info(f"actions[0, :3]: \n{actions[0, :3]}")  # First 3 action vectors
+                logger.info(f"states[0, :3]: \n{states[0, :3]}")  # First 3 state vectors
+                
+                # Check for NaN or Inf
+                logger.info(f"\nData validation:")
+                logger.info(f"clips has NaN: {torch.isnan(clips).any().item()}")
+                logger.info(f"actions has NaN: {torch.isnan(actions).any().item()}")
+                logger.info(f"states has NaN: {torch.isnan(states).any().item()}")
+                logger.info("=" * 80)'''
                 return (clips, actions, states, extrinsics)
 
             clips, actions, states, extrinsics = load_clips()
@@ -446,23 +467,26 @@ def main(args, resume_preempt=False):
                     z_tf, z_ar = forward_predictions(h)
                     jloss = loss_fn(z_tf, h)
                     sloss = loss_fn(z_ar, h)
-                    loss = jloss + sloss
+                    loss = (jloss + sloss)/accumulation_steps
 
-                # Step 2. Backward & step
+                # Step 2. Backward 
                 if mixed_precision:
                     scaler.scale(loss).backward()
-                    scaler.unscale_(optimizer)
                 else:
                     loss.backward()
-                if mixed_precision:
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    optimizer.step()
-                optimizer.zero_grad()
+                
+                # Step 3. Only update weights every accumulation_steps iterations
+                if (itr + 1) % accumulation_steps == 0:
+                    if mixed_precision:
+                        scaler.unscale_(optimizer)
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        optimizer.step()
+                    optimizer.zero_grad()
 
                 return (
-                    float(loss),
+                    float(loss) * accumulation_steps,
                     float(jloss),
                     float(sloss),
                     _new_lr,

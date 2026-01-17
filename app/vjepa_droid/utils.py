@@ -31,9 +31,9 @@ def load_pretrained(
 ):
     logger.info(f"Loading pretrained model from {r_path}")
     checkpoint = robust_checkpoint_loader(r_path, map_location=torch.device("cpu"))
-
-    epoch = checkpoint["epoch"]
-
+    logger.info("Inside of loading pretrained")
+    #epoch = checkpoint["epoch"]
+    epoch = 0
     if load_encoder:
         # -- loading encoder
         pretrained_dict = checkpoint[context_encoder_key]
@@ -51,7 +51,7 @@ def load_pretrained(
     # -- loading target_encoder
     if load_encoder:
         if target_encoder is not None:
-            print(list(checkpoint.keys()))
+            logger.info(list(checkpoint.keys()))
             pretrained_dict = checkpoint[target_encoder_key]
             pretrained_dict = {k.replace("backbone.", ""): v for k, v in pretrained_dict.items()}
             msg = target_encoder.load_state_dict(pretrained_dict, strict=False)
