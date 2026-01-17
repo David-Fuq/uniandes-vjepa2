@@ -33,6 +33,7 @@ configs/local
 droid_raw_data/*
 vjepa2_checkpoints/*
 data_curation/droid_raw_data_mug/
+data_curation/new_videos/
 data_curation/Thu_Jul_20_10:54:28_2023/
 final_dataset_*/
 models/
