@@ -135,7 +135,7 @@ class VisionTransformerPredictorAC(nn.Module):
 
     def forward(self, x, actions, states, extrinsics=None):
         """
-        :param x: context tokens
+        :param x: context tokens -> from encoder
         """
         # Map tokens to predictor dimensions
         x = self.predictor_embed(x)
